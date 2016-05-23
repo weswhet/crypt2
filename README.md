@@ -30,6 +30,10 @@ The `SkipUsers` preference allows you to define an array of users that will not 
 $ sudo defaults write /Library/Preferences/com.grahamgilbert.crypt SkipUsers -array-add adminuser
 ```
 
+### Validate
+
+The `Validate` preference will validate the key that is on the machine is able to unlock the disk and is the same as is on the server. This means that the key will be retained on disk (readable only by root). This may not be acceptable to some (despite the fact that the only way to get this key is to unlock the disk in the first place), so the default for this `False`.
+
 ## Credits
 
 Crypt 2 couldn't have been written without the help of [Tom Burgin](https://github.com/tburgin) - he is responsible for all of the good code in this project. The bad bits are mine.

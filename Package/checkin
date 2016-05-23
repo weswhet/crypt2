@@ -4,6 +4,7 @@ import subprocess
 import os
 import urllib
 import sys
+import datetime
 
 from Foundation import *
 import FoundationPlist
@@ -11,11 +12,40 @@ import FoundationPlist
 BUNDLE_ID = 'com.grahamgilbert.crypt'
 PLIST_PATH = '/private/var/root/crypt_output.plist'
 
+def run_bool(cmd):
+    """
+    Accepts a list of commands to run, and will return a boolean
+    based on the exit code.
+
+    Input: a list containing a commands
+    Returns: a boolean
+    """
+    task = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE)
+    (output, error) = task.communicate()
+    if task.returncode == 0:
+        return True
+    else:
+        return False
+
+def run_cmd(cmd):
+    """
+    Accepts a list of commands to run, and will return the output and any
+    error.
+
+    Input: a list containing a commands
+    Returns: output and error
+    """
+    task = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE)
+    (output, error) = task.communicate()
+    return output, error
+
 def set_pref(pref_name, pref_value):
     """Sets a preference, writing it to
         /Library/Preferences/ManagedInstalls.plist.
         This should normally be used only for 'bookkeeping' values;
-        values that control the behavior of munki may be overridden
+        values that control the behavior of Crypt may be overridden
         elsewhere (by MCX, for example)"""
     try:
         CFPreferencesSetValue(
@@ -34,6 +64,7 @@ def pref(pref_name):
         - default_prefs defined here.
     """
     default_prefs = {
+        'Validate': False
     }
     pref_value = CFPreferencesCopyAppValue(pref_name, BUNDLE_ID)
     if pref_value == None:
@@ -54,7 +85,7 @@ def GetMacName():
     thename = thename.strip()
     return thename
 
-def escrow_key(plist):
+def escrow_key(plist, validate_key):
     server_url = pref('ServerURL')
     if server_url == None:
         return False
@@ -62,30 +93,77 @@ def escrow_key(plist):
         theurl = server_url+"checkin/"
     else:
         theurl = server_url+"/checkin/"
-    # In the future, we're going to submit the whole plsit, but for now...
     serial = plist['SerialNumber']
     key = plist['RecoveryKey']
     username = plist['EnabledUser']
     macname = GetMacName()
-    mydata=[('serial',serial),('recovery_password',key),('username',username),
-    ('macname',macname)]
-    mydata=urllib.urlencode(mydata)
-    cmd = ['/usr/bin/curl', '-fsSL', '--data', mydata, theurl]
-    task = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE)
-    (output, error) = task.communicate()
-    if task.returncode == 0:
-        return True
+    if validate_key == True:
+        process_result = process_key_validation(plist=plist)
+        if process_result == True:
+            now = datetime.datetime.now()
+            set_pref('last_validated' now)
+            return True
+        else:
+            return False
     else:
-        return False
+
+        mydata=[('serial',serial),('recovery_password',key),('username',username),
+        ('macname',macname), (secret_type,'recovery_key')]
+        mydata=urllib.urlencode(mydata)
+        return run_bool(['/usr/bin/curl', '-fsSL', '--data', mydata, theurl])
+
+def validate_key(key):
+    return run_bool(['/usr/bin/fdesetup', 'validaterecovery', key])
+
+def process_key_validation(plist):
+    now = datetime.datetime.now()
+    yesterday = now - datetime.delta(days=1)
+    # Only validate if we haven't validated today or if
+    # someone has said to validate in the future
+    if pref('last_validated') < yesterday or pref('last_validated') < now:
+        server_url = pref('ServerURL')
+        if server_url == None:
+            return False
+        if server_url.endswith("/"):
+            theurl = server_url+"validate/"
+        else:
+            theurl = server_url+"/validate/"
+
+        # Validate key on disk
+        serial = plist['SerialNumber']
+        key = plist['RecoveryKey']
+        username = plist['EnabledUser']
+        macname = GetMacName()
+        validated = validate_key(key)
+        # Send result and the usual checkin data to server
+        mydata=[('serial',serial),('recovery_password',key),('username',username),
+        ('macname',macname), (secret_type,'recovery_key'), (validated, validated)]
+        mydata=urllib.urlencode(mydata)
+        (output, error) = run_cmd(['/usr/bin/curl', '-fsSL', '--data', mydata, theurl])
+
+        # We're going to get sent back a plist
+        try:
+            output_plist = FoundationPlist.readPlistFromString(output)
+        except:
+            return False
+
+        if output_plist.get('valid') == True:
+            # the key on disk is the right one, and it's in Crypt Server
+            return True
+        else:
+            return False
 
 def main():
     if os.path.isfile(PLIST_PATH):
+        # Make it readable by root only. Do this in the auth plugin one day.
+        os.chown(PLIST_PATH, 0, 0)
+        os.chmod(PLIST_PATH, 0o400)
         plist = FoundationPlist.readPlist(PLIST_PATH)
-        escrow_result = escrow_key(plist=plist)
-        if escrow_result:
-            os.remove(PLIST_PATH)
+        validate_key = pref('Validate')
+        escrow_result = escrow_key(plist=plist, validate_key=validate_key)
 
+        if escrow_result and validate_key == False:
+            os.remove(PLIST_PATH)
 
 if __name__ == '__main__':
     main()
