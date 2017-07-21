@@ -147,10 +147,10 @@ class Enablement: CryptMechanism {
     task.waitUntilExit()
     
     if task.terminationStatus != 0 {
-      let termstatus = task.terminationStatus
-      let termreason = task.terminationReason
-      os_log("fdesetup terminated with a NON-Zero exit status: %{public}@", log: Enablement.log, type: .error, String(termstatus))
-      os_log("Termreason is: %{public}@", log: Enablement.log, type: .error, String(describing: termreason))
+      let termstatus = String(describing: task.terminationStatus)
+      let termreason = String(describing: task.terminationReason)
+      os_log("fdesetup terminated with a NON-Zero exit status: %{public}@", log: Enablement.log, type: .error, termstatus)
+      os_log("Termreason is: %{public}@", log: Enablement.log, type: .error, termreason)
       throw FileVaultError.fdeSetupFailed(retCode: task.terminationStatus)
     }
     os_log("fdesetup terminated with a zero exit status", log: Enablement.log, type: .error)
